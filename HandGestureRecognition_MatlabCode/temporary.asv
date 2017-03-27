@@ -1,0 +1,274 @@
+clc;
+clear all;
+close all;
+ 
+%Taking input for gesture recognition system through a dialog box
+TrainDatabasePath = uigetdir('E:\RSCOE\BE (E&TC)\project BE\Hand Gesture Recognition 3D\train', 'Select the train database path' );
+TestDatabasePath = uigetdir('E:\RSCOE\BE (E&TC)\project BE\Hand Gesture Recognition 3D\test','Select the test database path');
+prompt = {'Enter the name of the gesture (a number between 1 to 30):'};
+dlg_title = ('Input For Hand Gesture Recognition System');
+TestImage1 = inputdlg(prompt,dlg_title);
+TestImage = strcat(TestDatabasePath,'\',char(TestImage1),'.mpo');           %Reading the test/input image and resizing it
+ 
+%To generate a matrix 'T' such that each column within it represents a matrix of an image
+T = [];
+for i = 1 : 11
+    str = int2str(i);    
+    str = strcat('\',str,'.mpo');
+    str = strcat(TrainDatabasePath,str);
+    img = imread(str);
+    img = imresize(img,0.01);                                                %Resizing image to 1% of its original size, keeping all it's features intact
+    
+   hsv=rgb2hsv(img);
+   h=hsv(:,:,1);
+   s=hsv(:,:,2);
+  
+   [r c v]=find(h>0.25 | s<=0.15 | s>0.9); %non skin
+   numid=size(r,1);
+  binhsv=[];
+   for j=1:numid
+       img(r(j),c(j),:)=0;
+       binhsv(r(j),c(j),:)=1;
+   end
+  
+   %ycbcr segmentation
+   img_ycbcr=img;  %image from the previous segmentation
+   ycbcr=rgb2ycbcr(img_ycbcr);
+   cb=ycbcr(:,:,2);
+   cr=ycbcr(:,:,3);
+  
+   
+    %Detect Skin
+     [r c v] = find(cb<=77 | cb >=127 | cr<=133 | cr>=173);
+    numid = size(r,1);
+   bincbcr=[];
+    %Mark Skin Pixels
+    for j=1:numid
+        img_ycbcr(r(j),c(j),:) = 0;
+       bincbcr(r(j),c(j),:)=1;
+    end
+   
+  bin=binhsv&bincbcr;
+  
+  SE=strel('disk',1);
+  bin=imclose(bin,SE);
+
+    [irow icol] = size(bin);                                                %Gives the size of the 'img' matrix(number of rows and columns of matrix 'img')
+    temp = reshape(bin',irow*icol,1);                                       %Converts the matrix of image into a single column matrix
+    T = [T temp];                   
+end
+ 
+%To generate a mean matrix (single column matrix) 'm' containing mean along each row of matrix 'T'
+m = mean(T,2); 
+ 
+Train_Number = size(T,2);                                                   %Stores the number of columns in matrix 'T' in variable 'Train_Number'
+ 
+%To generate a difference matrix 'A' by subtracting elements of 'm' matrix from 'T' matrix respectively
+A = [];  
+for i = 1 : Train_Number                                                    
+    temp = double(T(:,i))-m ;                                               %'double' used to convert to double precision value (64-bit) so as to cover large numbers
+    A = [A temp]; 
+end
+ 
+%To generate an Eigen matrix for detailed comparison by generating Eigen values and vectors 
+L = A'*A;
+[V D] = eig(L);                                                             %Produces matrix of eigenvalues (D)[on main diagonal in matrix] and eigenvectors (V)[on respective columns] of matrix L, so that L*V = V*D
+L_eig_vec = [];  
+for i = 1 : size(V,2) 
+    if( D(i,i)>1 )   
+        L_eig_vec = [L_eig_vec V(:,i)];                                     %Separating Positive(>0) Eigen values from the Eigen Matrix(removing black color)
+    end
+end
+ 
+%Combining the results of difference matrix 'A' and Eigen matrix L_eig_vec into a ProjectedImages matrix
+ 
+Eigenfaces = A * L_eig_vec;                                                 %To get combined result from difference matrix A and Eigen matrix L_eig_vec
+ProjectedImages = [];
+Train_Number = size(Eigenfaces,2);
+for i = 1 : Train_Number
+    temp = Eigenfaces'*A(:,i);                                              
+    ProjectedImages = [ProjectedImages temp];                               %Creates final difference matrix for comparison, column-wise 
+end
+ 
+%Extracting data from Input image through its matrix ProjectedTestImage
+im = imread(TestImage);                                             %Read input test image
+img = imresize(im,0.01);
+ 
+hsv=rgb2hsv(img);
+   h=hsv(:,:,1);
+   s=hsv(:,:,2);
+  
+   [r c v]=find(h>0.25 | s<=0.15 | s>0.9); %non skin
+   numid=size(r,1);
+  binhsv=[];
+   for j=1:numid
+       img(r(j),c(j),:)=0;
+       binhsv(r(j),c(j),:)=1;
+   end
+  
+   %ycbcr segmentation
+   img_ycbcr=img;  %image from the previous segmentation
+   ycbcr=rgb2ycbcr(img_ycbcr);
+   cb=ycbcr(:,:,2);
+   cr=ycbcr(:,:,3);
+  
+   
+    %Detect Skin
+     [r c v] = find(cb<=77 | cb >=127 | cr<=133 | cr>=173);
+    numid = size(r,1);
+   bincbcr=[];
+    %Mark Skin Pixels
+    for j=1:numid
+        img_ycbcr(r(j),c(j),:) = 0;
+       bincbcr(r(j),c(j),:)=1;
+    end
+   
+  bin=binhsv&bincbcr;
+  
+  SE=strel('disk',1);
+  bin=imclose(bin,SE);
+bin_in=bin;
+[irow icol] = size(bin);
+InImage = reshape(bin',irow*icol,1);                                       
+Difference = double(InImage)-m;                                             
+ProjectedTestImage = Eigenfaces'*Difference; 
+ 
+%Forming a single row matrix 'Euc_dist' which includes difference between final subtraction results of train and test images
+Euc_dist = [];
+for i = 1 : Train_Number                                                    
+    q = ProjectedImages(:,i);
+    temp = ( norm( ProjectedTestImage - q ) )^2;
+    Euc_dist = [Euc_dist temp];
+end
+ 
+display(Euc_dist);
+[Euc_dist_min , Recognized_index] = min(Euc_dist);                          %Minimum Euclidean Distance is stored in 'Euc_dist_min' and its position is stored in 'Recognized_index'
+OutputName = strcat(int2str(Recognized_index),'.mpo');                      %Create path/string for recognized image
+SelectedImage = strcat(TrainDatabasePath,'\',OutputName);
+SelectedImage = imread(SelectedImage);
+SelectedImage = imresize(SelectedImage,0.01);
+ 
+%Displaying test/input image
+figure('Name','Input Colour,Grayscale & Binary Image With Output Colour Image','NumberTitle','off');
+figure(1);
+subplot(2,2,1);
+imshow(im);
+title('Test Image (Taken as input)');
+ 
+%Displaying input image in colour,grayscale and binary form
+figure(1);
+subplot(2,2,2);
+imshow(bin_in);
+title('Binary Test/Input image');
+figure(1);
+subplot(2,2,3);
+temp = rgb2gray(im);
+imshow(temp);
+title('Test/input Image in grayscale');
+ 
+%Displaying binary images of input and output for comparison
+figure('Name','Binary Input And Output Image Comparison','NumberTitle','off');
+figure(2);
+subplot(1,2,1);
+imshow(bin_in);
+title('Binary Test/Input image');
+ 
+%Displaying minimum Euclidean distance
+strtemp=int2str(Euc_dist_min);
+eucdiststr = strcat('Minimum Euclidean Distance is : ',strtemp);
+ 
+%Displaying equivalent output image in colour and binary form
+figure(1);
+subplot(2,2,4);
+imshow(SelectedImage);
+title('Equivalent/Train/Output Image');
+ 
+img = SelectedImage;
+hsv=rgb2hsv(img);
+   h=hsv(:,:,1);
+   s=hsv(:,:,2);
+  
+   [r c v]=find(h>0.25 | s<=0.15 | s>0.9); %non skin
+   numid=size(r,1);
+  binhsv=[];
+   for j=1:numid
+       img(r(j),c(j),:)=0;
+       binhsv(r(j),c(j),:)=1;
+   end
+  
+   %ycbcr segmentation
+   img_ycbcr=img;  %image from the previous segmentation
+   ycbcr=rgb2ycbcr(img_ycbcr);
+   cb=ycbcr(:,:,2);
+   cr=ycbcr(:,:,3);
+  
+   
+    %Detect Skin
+     [r c v] = find(cb<=77 | cb >=127 | cr<=133 | cr>=173);
+    numid = size(r,1);
+   bincbcr=[];
+    %Mark Skin Pixels
+    for j=1:numid
+        img_ycbcr(r(j),c(j),:) = 0;
+       bincbcr(r(j),c(j),:)=1;
+    end
+   
+  bin=binhsv&bincbcr;
+  
+  SE=strel('disk',1);
+  bin=imclose(bin,SE);
+figure(2);
+subplot(1,2,2);
+xlabel(eucdiststr);
+imshow(bin);
+title('Binary Equivalent/Train/Output Image');
+display('Minimum Euclidean Distance is : ');
+disp(Euc_dist_min);
+ 
+%Displaying resultant output in text form
+op = strcat(int2str(Recognized_index),'');
+temp=strcat('The identified gesture enclosed in the image is : ',op);
+disp(temp);
+ 
+%Opening the respective application as per gesture and giving the respective text output
+switch(Recognized_index)
+ 
+    case 1   
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office\Microsoft Excel 2010.lnk');
+            display('The identified gesture enclosed in the image is : One');
+            
+    case 2    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office\Microsoft Word 2010.lnk');
+            display('The identified gesture enclosed in the image is : Two');
+            
+    case 3    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Office\Microsoft PowerPoint 2010.lnk');
+            display('The identified gesture enclosed in the image is : Three');
+            
+    case 4    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Accessories\Paint.lnk');
+            display('The identified gesture enclosed in the image is : Four');
+            
+    case 5    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Accessories\WordPad.lnk');
+            display('The identified gesture enclosed in the image is : Five');
+            
+    case 6    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Accessories\Windows Media Player.lnk');
+            display('The identified gesture enclosed in the image is : Six');
+             
+    case 7    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Accessories\Calculator.lnk');
+            display('The identified gesture enclosed in the image is : Seven');
+            
+    case 8    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Mozilla Firefox.lnk');
+            display('The identified gesture enclosed in the image is : Eight');
+            
+    case 9    
+            system('C:\ProgramData\Microsoft\Windows\Start Menu\Programs\WordWeb.lnk');
+            display('The identified gesture enclosed in the image is : Nine');
+           
+end            
+%gtext(eucdiststr);
+%gtext(temp);
